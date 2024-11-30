@@ -164,7 +164,10 @@ impl App {
                             }
                         });
                     }
-                } else if ui.button("Simulate").clicked() {
+                } else if ui
+                    .button(egui::RichText::new("Simulate").size(30.0))
+                    .clicked()
+                {
                     self.run_sim();
                     self.sim_needed = false;
                 }
@@ -227,7 +230,7 @@ impl App {
             [v[0], v[1]]
         };
 
-        let end_i = (self.t / self.dt) as usize + 1;
+        let end_i = ((self.t / self.dt) as usize + 1).clamp(0, self.system.pos_log.len() - 1);
         let start_i = end_i.saturating_sub(history_len);
         let history = self.system.pos_log[start_i..end_i]
             .iter()
