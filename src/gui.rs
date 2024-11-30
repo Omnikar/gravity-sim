@@ -216,9 +216,19 @@ impl App {
             let delta = <[f32; 2]>::from(response.drag_delta() / size).map(|v| v as f64 * scale);
             vc.cx -= delta[0];
             vc.cy += delta[1];
-            if response.hovered() {
-                let scroll = ctx.input(|i| i.smooth_scroll_delta.y as f64) / 70.0;
-                vc.scale -= scroll;
+            if let Some(mouse_pos) = response.hover_pos() {
+                let scroll = -ctx.input(|i| i.smooth_scroll_delta.y as f64) / 70.0;
+                vc.scale += scroll;
+
+                let mut zoom_pos =
+                    <[f32; 2]>::from(mouse_pos - response.rect.min).map(|v| (v / size) as f64);
+                zoom_pos[0] -= 0.5;
+                zoom_pos[1] -= 0.5;
+                zoom_pos[1] *= -1.0;
+
+                let fact = 1.0 - scroll.exp();
+                vc.cx += zoom_pos[0] * scale * fact;
+                vc.cy += zoom_pos[1] * scale * fact;
             }
         });
     }
