@@ -9,6 +9,10 @@ const M2_COLOR: Color32 = Color32::GRAY;
 const M3_COLOR: Color32 = Color32::RED;
 const TRAIL_COLOR: Color32 = Color32::from_rgb(0xff, 0, 0xff);
 
+const VIEWPORT_SIZE: usize = 512;
+
+type Ui<'a> = &'a mut egui::Ui;
+
 pub struct App {
     pub system: Cr3bs,
     pub dt: f64,
@@ -81,105 +85,71 @@ impl App {
         };
 
         eframe::run_simple_native("CR3BP Simulation", options, move |ctx, _frame| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    let dt_before = self.dt;
-                    ui.add(egui::Label::new("Δt"));
-                    ui.add(
-                        egui::DragValue::new(&mut self.dt)
-                            .range(0.0..=0.05)
-                            .speed(0.0001),
-                    );
-                    if self.dt != dt_before {
-                        self.sim_needed = true;
-                        self.system.pos_log.truncate(1);
-                        self.system.vel_log.truncate(1);
-                    }
-
-                    ui.add(egui::Label::new("Duration"));
-                    ui.add(egui::DragValue::new(&mut self.duration).speed(0.1));
-                    self.duration = self.duration.max(0.0);
-                    self.sim_needed |=
-                        (self.duration / self.dt).ceil() as usize > self.system.pos_log.len();
-
-                    ui.add(egui::Label::new("Trail"));
-                    ui.add(egui::DragValue::new(&mut self.history).speed(0.1));
-
-                    ui.add(egui::Label::new("Playback Speed"));
-                    ui.add(egui::DragValue::new(&mut self.playback_speed).speed(0.1));
-
-                    if ui.button(if self.paused { "⏵" } else { "⏸" }).clicked() {
-                        self.paused ^= true;
-                    }
-
-                    ui.style_mut().spacing.slider_width = ui.available_width() - 60.0;
-                    ui.add(
-                        egui::Slider::new(&mut self.t, 0.0..=self.duration)
-                            .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.1 }),
-                    );
-                });
-
-                if !self.sim_needed {
-                    let size = ui.available_width() / 4.08;
-                    for inertial in [true, false] {
-                        ui.horizontal(|ui| {
-                            for perspective in 0..4 {
-                                let label = format!(
-                                    "{} {}",
-                                    ["xy", "yz", "xz", "isometric"][perspective],
-                                    ["rotating", "inertial"][inertial as usize]
-                                );
-                                let history_len = (self.history / self.dt).floor() as usize + 1;
-                                let image = self.draw_view(history_len, perspective, inertial);
-                                let texture =
-                                    ui.ctx().load_texture(&label, image, Default::default());
-                                let vcs = if inertial {
-                                    &mut self.view_configs.inertial_vcs
-                                } else {
-                                    &mut self.view_configs.rotating_vcs
-                                };
-                                let vc = &mut vcs[perspective];
-                                ui.vertical(|ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.label(label);
-                                        for val in [&mut vc.cx, &mut vc.cy] {
-                                            ui.add(
-                                                egui::DragValue::new(val)
-                                                    .speed(vc.scale.exp() / 100.0),
-                                            );
-                                        }
-                                        ui.add(egui::DragValue::new(&mut vc.scale).speed(0.03));
-                                        let def_vcs = ViewConfigs::default();
-                                        let def_vc = if inertial {
-                                            def_vcs.inertial_vcs
-                                        } else {
-                                            def_vcs.rotating_vcs
-                                        }[perspective];
-                                        if *vc != def_vc && ui.button("↺").clicked() {
-                                            *vc = def_vc;
-                                        }
-                                    });
-                                    ui.image((texture.id(), [size; 2].into()));
-                                });
-                            }
-                        });
-                    }
-                } else if ui
-                    .button(egui::RichText::new("Simulate").size(30.0))
-                    .clicked()
-                {
-                    self.run_sim();
-                    self.sim_needed = false;
-                }
-
-                self.paused |= self.sim_needed;
-                if !self.paused {
-                    self.t += self.playback_speed * ctx.input(|i| i.stable_dt) as f64;
-                    self.t = self.t.rem_euclid(self.duration);
-                    ctx.request_repaint();
-                }
-            });
+            egui::CentralPanel::default().show(ctx, |ui| self.event_loop(ctx, ui));
         })
+    }
+
+    fn event_loop(&mut self, ctx: &egui::Context, ui: Ui) {
+        ui.horizontal(|ui| self.draw_controls(ui));
+
+        if !self.sim_needed {
+            let size = ui.available_width() / 4.08;
+
+            for inertial in [true, false] {
+                ui.horizontal(|ui| {
+                    (0..4).for_each(|perspective| self.draw_view(ui, inertial, perspective, size));
+                });
+            }
+        } else if ui
+            .button(egui::RichText::new("Simulate").size(30.0))
+            .clicked()
+        {
+            self.run_sim();
+            self.sim_needed = false;
+        }
+
+        self.paused |= self.sim_needed;
+        if !self.paused {
+            self.t += self.playback_speed * ctx.input(|i| i.stable_dt) as f64;
+            self.t = self.t.rem_euclid(self.duration);
+            ctx.request_repaint();
+        }
+    }
+
+    fn draw_controls(&mut self, ui: Ui) {
+        let dt_before = self.dt;
+        ui.add(egui::Label::new("Δt"));
+        ui.add(
+            egui::DragValue::new(&mut self.dt)
+                .range(0.0..=0.05)
+                .speed(0.0001),
+        );
+        if self.dt != dt_before {
+            self.sim_needed = true;
+            self.system.pos_log.truncate(1);
+            self.system.vel_log.truncate(1);
+        }
+
+        ui.add(egui::Label::new("Duration"));
+        ui.add(egui::DragValue::new(&mut self.duration).speed(0.1));
+        self.duration = self.duration.max(0.0);
+        self.sim_needed |= (self.duration / self.dt).ceil() as usize > self.system.pos_log.len();
+
+        ui.add(egui::Label::new("Trail"));
+        ui.add(egui::DragValue::new(&mut self.history).speed(0.1));
+
+        ui.add(egui::Label::new("Playback Speed"));
+        ui.add(egui::DragValue::new(&mut self.playback_speed).speed(0.1));
+
+        if ui.button(if self.paused { "⏵" } else { "⏸" }).clicked() {
+            self.paused ^= true;
+        }
+
+        ui.style_mut().spacing.slider_width = ui.available_width() - 60.0;
+        ui.add(
+            egui::Slider::new(&mut self.t, 0.0..=self.duration)
+                .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.1 }),
+        );
     }
 
     fn run_sim(&mut self) {
@@ -202,7 +172,46 @@ impl App {
         }
     }
 
-    fn draw_view(&self, history_len: usize, perspective_id: usize, inertial: bool) -> ColorImage {
+    fn draw_view(&mut self, ui: Ui, inertial: bool, perspective: usize, size: f32) {
+        let label = format!(
+            "{} {}",
+            ["xy", "yz", "xz", "isometric"][perspective],
+            ["rotating", "inertial"][inertial as usize]
+        );
+        let history_len = (self.history / self.dt).floor() as usize + 1;
+        let image = self.render_view(history_len, inertial, perspective);
+        let texture = ui.ctx().load_texture(&label, image, Default::default());
+        let vcs = if inertial {
+            &mut self.view_configs.inertial_vcs
+        } else {
+            &mut self.view_configs.rotating_vcs
+        };
+        let vc = &mut vcs[perspective];
+
+        let viewport_controls = |ui: Ui| {
+            ui.label(label);
+            for val in [&mut vc.cx, &mut vc.cy] {
+                ui.add(egui::DragValue::new(val).speed(vc.scale.exp() / 100.0));
+            }
+            ui.add(egui::DragValue::new(&mut vc.scale).speed(0.03));
+            let def_vcs = ViewConfigs::default();
+            let def_vc = if inertial {
+                def_vcs.inertial_vcs
+            } else {
+                def_vcs.rotating_vcs
+            }[perspective];
+            if *vc != def_vc && ui.button("↺").clicked() {
+                *vc = def_vc;
+            }
+        };
+
+        ui.vertical(|ui| {
+            ui.horizontal(viewport_controls);
+            ui.image((texture.id(), [size; 2].into()));
+        });
+    }
+
+    fn render_view(&self, history_len: usize, inertial: bool, perspective_id: usize) -> ColorImage {
         let config = if inertial {
             self.view_configs.inertial_vcs
         } else {
@@ -240,7 +249,7 @@ impl App {
             .map(project_viewport)
             .collect::<Vec<_>>();
 
-        let px_size = 512;
+        let px_size = VIEWPORT_SIZE;
         let mut image = ColorImage::new([px_size; 2], Color32::BLACK);
         let mut put_px = |row, col, color| {
             if row >= 0 && row < px_size as isize && col >= 0 && col < px_size as isize {
@@ -260,14 +269,10 @@ impl App {
             for ends in history.windows(2) {
                 let [start, end] = [ends[0], ends[1]].map(world2px);
                 let size = px_size as f64;
-                if start[0] < 0.0
-                    || start[0] >= size
-                    || start[1] < 0.0
-                    || start[1] >= size
-                    || end[0] < 0.0
-                    || end[0] >= size
-                    || end[1] < 0.0
-                    || end[1] >= size
+                if [start, end]
+                    .as_flattened()
+                    .iter()
+                    .any(|&v| v < 0.0 || v >= size)
                 {
                     continue;
                 }
@@ -323,13 +328,10 @@ impl App {
             .zip([M1_COLOR, M2_COLOR, M3_COLOR]);
         for ([row, col], color) in circles {
             let r = 5;
-            for i in -r..=r {
-                for j in -r..=r {
-                    if i * i + j * j < r * r {
-                        put_px(row as isize + i, col as isize + j, color);
-                    }
-                }
-            }
+            (-r..=r)
+                .flat_map(|i| (-r..=r).map(move |j| (i, j)))
+                .filter(|(i, j)| i * i + j * j < r * r)
+                .for_each(|(i, j)| put_px(row as isize + i, col as isize + j, color));
         }
 
         image
