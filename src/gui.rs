@@ -4,6 +4,11 @@ use std::io::Write;
 
 use crate::cr3bp::{Cr3bs, Vec3};
 
+const M1_COLOR: Color32 = Color32::BLUE;
+const M2_COLOR: Color32 = Color32::GRAY;
+const M3_COLOR: Color32 = Color32::RED;
+const TRAIL_COLOR: Color32 = Color32::from_rgb(0xff, 0, 0xff);
+
 pub struct App {
     pub system: Cr3bs,
     pub dt: f64,
@@ -248,31 +253,54 @@ impl App {
             ]
         };
 
-        for ends in history.windows(2) {
-            let [start, end] = [ends[0], ends[1]].map(world2px);
-            let size = px_size as f64;
-            if start[0] < 0.0
-                || start[0] >= size
-                || start[1] < 0.0
-                || start[1] >= size
-                || end[0] < 0.0
-                || end[0] >= size
-                || end[1] < 0.0
-                || end[1] >= size
-            {
-                continue;
+        let mut draw_trail = |history: &[[f64; 2]], color: Color32| {
+            for ends in history.windows(2) {
+                let [start, end] = [ends[0], ends[1]].map(world2px);
+                let size = px_size as f64;
+                if start[0] < 0.0
+                    || start[0] >= size
+                    || start[1] < 0.0
+                    || start[1] >= size
+                    || end[0] < 0.0
+                    || end[0] >= size
+                    || end[1] < 0.0
+                    || end[1] >= size
+                {
+                    continue;
+                }
+                let steps = (end[0] - start[0])
+                    .abs()
+                    .max((end[1] - start[1]).abs())
+                    .floor() as usize
+                    + 1;
+                for i in 0..steps {
+                    let t = i as f64 / steps as f64;
+                    let row = (1.0 - t) * start[0] + t * end[0];
+                    let col = (1.0 - t) * start[1] + t * end[1];
+                    put_px(row as isize, col as isize, color);
+                }
             }
-            let steps = (end[0] - start[0])
-                .abs()
-                .max((end[1] - start[1]).abs())
-                .floor() as usize
-                + 1;
-            for i in 0..steps {
-                let t = i as f64 / steps as f64;
-                let row = (1.0 - t) * start[0] + t * end[0];
-                let col = (1.0 - t) * start[1] + t * end[1];
-                put_px(row as isize, col as isize, Color32::from_rgb(0xff, 0, 0xff));
-            }
+        };
+
+        draw_trail(&history, TRAIL_COLOR);
+
+        if inertial {
+            let circle_steps = 64;
+            let circle_history = (0..=circle_steps)
+                .map(|i| i as f64 * std::f64::consts::TAU / circle_steps as f64)
+                .map(|t| Vec3::new(t.cos(), t.sin(), 0.0));
+            let m1_history = circle_history
+                .clone()
+                .map(|v| v * self.system.mass_ratio)
+                .map(project_viewport)
+                .collect::<Vec<_>>();
+            let m2_history = circle_history
+                .clone()
+                .map(|v| v * (1.0 - self.system.mass_ratio))
+                .map(project_viewport)
+                .collect::<Vec<_>>();
+            draw_trail(&m1_history, M1_COLOR);
+            draw_trail(&m2_history, M2_COLOR);
         }
 
         let m1_pos = project_viewport(rotate_inertial(
@@ -286,11 +314,10 @@ impl App {
             inertial,
         ));
         let m3_pos = history.last().copied().unwrap();
-        let circles = [m1_pos, m2_pos, m3_pos].into_iter().map(world2px).zip([
-            Color32::BLUE,
-            Color32::GRAY,
-            Color32::RED,
-        ]);
+        let circles = [m1_pos, m2_pos, m3_pos]
+            .into_iter()
+            .map(world2px)
+            .zip([M1_COLOR, M2_COLOR, M3_COLOR]);
         for ([row, col], color) in circles {
             let r = 5;
             for i in -r..=r {
