@@ -1,4 +1,4 @@
-use eframe::egui::{self, Color32, ColorImage, Context, DragValue, Key, Label, Slider};
+use eframe::egui::{self, Color32, ColorImage, Context, DragValue, Key, Label, Sense, Slider};
 use nalgebra::Matrix2x3;
 use std::io::Write;
 
@@ -97,7 +97,7 @@ impl App {
 
             for inertial in [true, false] {
                 ui.horizontal(|ui| {
-                    (0..4).for_each(|perspective| self.draw_view(ui, inertial, perspective, size));
+                    (0..4).for_each(|perspect| self.draw_view(ctx, ui, inertial, perspect, size));
                 });
             }
         } else if ui
@@ -166,27 +166,7 @@ impl App {
         );
     }
 
-    fn run_sim(&mut self) {
-        let remaining_steps =
-            ((self.duration / self.dt).ceil() as usize).saturating_sub(self.system.pos_log.len());
-        self.system
-            // TODO: Better integration method
-            .modified_euler(self.dt, remaining_steps);
-
-        let pos_s = self.system.serialize_pos_log();
-        let vel_s = self.system.serialize_vel_log();
-
-        let mut pos_f = std::fs::File::create("pos_log.csv").unwrap();
-        write!(pos_f, "{}", pos_s).unwrap();
-        let mut vel_f = std::fs::File::create("vel_log.csv").unwrap();
-        write!(vel_f, "{}", vel_s).unwrap();
-        let mut jacobi_f = std::fs::File::create("jacobi_log.csv").unwrap();
-        for (pos, vel) in self.system.pos_log.iter().zip(self.system.vel_log.iter()) {
-            writeln!(jacobi_f, "{}", self.system.jacobi(*pos, *vel)).unwrap();
-        }
-    }
-
-    fn draw_view(&mut self, ui: Ui, inertial: bool, perspective: usize, size: f32) {
+    fn draw_view(&mut self, ctx: &Context, ui: Ui, inertial: bool, perspective: usize, size: f32) {
         let label = format!(
             "{} {}",
             ["xy", "yz", "xz", "isometric"][perspective],
@@ -202,7 +182,9 @@ impl App {
         };
         let vc = &mut vcs[perspective];
 
-        let viewport_controls = |ui: Ui| {
+        let scale = vc.scale.exp();
+
+        let viewport_control_bar = |vc: &mut ViewConfig, ui: Ui| {
             ui.label(label);
             for val in [&mut vc.cx, &mut vc.cy] {
                 ui.add(DragValue::new(val).speed(vc.scale.exp() / 100.0));
@@ -220,17 +202,33 @@ impl App {
         };
 
         ui.vertical(|ui| {
-            ui.horizontal(viewport_controls);
-            ui.image((texture.id(), [size; 2].into()));
+            ui.horizontal(|ui| viewport_control_bar(vc, ui));
+
+            let image_size = [size; 2].into();
+            let response = ui.allocate_response(image_size, Sense::click_and_drag());
+            ui.painter().image(
+                texture.id(),
+                response.rect,
+                egui::Rect::from_min_max((0.0, 0.0).into(), (1.0, 1.0).into()),
+                Color32::WHITE,
+            );
+
+            let delta = <[f32; 2]>::from(response.drag_delta() / size).map(|v| v as f64 * scale);
+            vc.cx -= delta[0];
+            vc.cy += delta[1];
+            if response.hovered() {
+                let scroll = ctx.input(|i| i.smooth_scroll_delta.y as f64) / 70.0;
+                vc.scale -= scroll;
+            }
         });
     }
 
-    fn render_view(&self, history_len: usize, inertial: bool, perspective_id: usize) -> ColorImage {
+    fn render_view(&self, history_len: usize, inertial: bool, perspective: usize) -> ColorImage {
         let config = if inertial {
             self.view_configs.inertial_vcs
         } else {
             self.view_configs.rotating_vcs
-        }[perspective_id];
+        }[perspective];
 
         use std::f64::consts::FRAC_1_SQRT_2;
         let frac_sqrt_3_2 = 3f64.sqrt() / 2.0;
@@ -249,7 +247,7 @@ impl App {
             ),
         ];
         let project_viewport = |v: Vec3| {
-            let v = proj_mats[perspective_id] * v;
+            let v = proj_mats[perspective] * v;
             [v[0], v[1]]
         };
 
@@ -307,7 +305,7 @@ impl App {
         draw_trail(&history, TRAIL_COLOR);
 
         if inertial {
-            let circle_steps = 64;
+            let circle_steps = 1024;
             let circle_history = (0..=circle_steps)
                 .map(|i| i as f64 * std::f64::consts::TAU / circle_steps as f64)
                 .map(|t| Vec3::new(t.cos(), t.sin(), 0.0));
@@ -349,6 +347,26 @@ impl App {
         }
 
         image
+    }
+
+    fn run_sim(&mut self) {
+        let remaining_steps =
+            ((self.duration / self.dt).ceil() as usize).saturating_sub(self.system.pos_log.len());
+        self.system
+            // TODO: Better integration method
+            .modified_euler(self.dt, remaining_steps);
+
+        let pos_s = self.system.serialize_pos_log();
+        let vel_s = self.system.serialize_vel_log();
+
+        let mut pos_f = std::fs::File::create("pos_log.csv").unwrap();
+        write!(pos_f, "{}", pos_s).unwrap();
+        let mut vel_f = std::fs::File::create("vel_log.csv").unwrap();
+        write!(vel_f, "{}", vel_s).unwrap();
+        let mut jacobi_f = std::fs::File::create("jacobi_log.csv").unwrap();
+        for (pos, vel) in self.system.pos_log.iter().zip(self.system.vel_log.iter()) {
+            writeln!(jacobi_f, "{}", self.system.jacobi(*pos, *vel)).unwrap();
+        }
     }
 }
 
