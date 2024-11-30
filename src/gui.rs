@@ -1,4 +1,5 @@
 use eframe::egui::{self, Color32, ColorImage};
+use nalgebra::Matrix2x3;
 use std::io::Write;
 
 use crate::cr3bp::{Cr3bs, Vec3};
@@ -17,14 +18,26 @@ pub struct App {
 
 #[derive(Clone, Copy)]
 pub struct ViewConfigs {
-    pub inertial_vcs: [ViewConfig; 3],
-    pub rotating_vcs: [ViewConfig; 3],
+    pub inertial_vcs: [ViewConfig; 4],
+    pub rotating_vcs: [ViewConfig; 4],
 }
 impl Default for ViewConfigs {
     fn default() -> Self {
         Self {
-            inertial_vcs: [(0.0, 0.0, 1.0), (0.0, 0.0, 1.0), (0.0, 0.0, 1.0)].map(Into::into),
-            rotating_vcs: [(1.0, 0.0, 0.0), (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)].map(Into::into),
+            inertial_vcs: [
+                (0.0, 0.0, 1.0),
+                (0.0, 0.0, 1.0),
+                (0.0, 0.0, 1.0),
+                (0.0, 0.0, 1.0),
+            ]
+            .map(Into::into),
+            rotating_vcs: [
+                (1.0, 0.0, 0.0),
+                (0.0, 0.0, 0.0),
+                (1.0, 0.0, 0.0),
+                (0.7, -0.4, -0.25),
+            ]
+            .map(Into::into),
         }
     }
 }
@@ -50,7 +63,7 @@ impl App {
             playback_speed: 1.0,
             paused: true,
             t: 0.0,
-            history: 1.0,
+            history: 10.0,
             view_configs: Default::default(),
             sim_needed: true,
         }
@@ -58,7 +71,7 @@ impl App {
 
     pub fn run(mut self) -> eframe::Result {
         let options = eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([1040.0, 780.0]),
+            viewport: egui::ViewportBuilder::default().with_inner_size([1420.0, 770.0]),
             ..Default::default()
         };
 
@@ -102,13 +115,13 @@ impl App {
                 });
 
                 if !self.sim_needed {
-                    let size = ui.available_width() / 3.06;
+                    let size = ui.available_width() / 4.08;
                     for inertial in [true, false] {
                         ui.horizontal(|ui| {
-                            for perspective in 0..3 {
+                            for perspective in 0..4 {
                                 let label = format!(
                                     "{} {}",
-                                    ["xy", "yz", "xz"][perspective],
+                                    ["xy", "yz", "xz", "isometric"][perspective],
                                     ["rotating", "inertial"][inertial as usize]
                                 );
                                 let history_len = (self.history / self.dt).floor() as usize + 1;
@@ -187,8 +200,27 @@ impl App {
         } else {
             self.view_configs.rotating_vcs
         }[perspective_id];
-        let axes = [[0, 1], [1, 2], [0, 2]][perspective_id];
-        let take_axes = |v: Vec3| axes.map(|ax| v[ax]);
+
+        use std::f64::consts::FRAC_1_SQRT_2;
+        let frac_sqrt_3_2 = 3f64.sqrt() / 2.0;
+        let frac_sqrt_3_4 = frac_sqrt_3_2 / 2.0;
+        let proj_mats = [
+            Matrix2x3::identity(),
+            Matrix2x3::new(0.0, 1.0, 0.0, 0.0, 0.0, 1.0),
+            Matrix2x3::new(1.0, 0.0, 0.0, 0.0, 0.0, 1.0),
+            Matrix2x3::new(
+                FRAC_1_SQRT_2,
+                FRAC_1_SQRT_2,
+                0.0,
+                -frac_sqrt_3_4,
+                frac_sqrt_3_4,
+                frac_sqrt_3_2,
+            ),
+        ];
+        let project_viewport = |v: Vec3| {
+            let v = proj_mats[perspective_id] * v;
+            [v[0], v[1]]
+        };
 
         let end_i = (self.t / self.dt) as usize + 1;
         let start_i = end_i.saturating_sub(history_len);
@@ -197,7 +229,7 @@ impl App {
             .copied()
             .enumerate()
             .map(|(i, v)| rotate_inertial(v, (i + start_i) as f64 * self.dt, inertial))
-            .map(take_axes)
+            .map(project_viewport)
             .collect::<Vec<_>>();
 
         let px_size = 512;
@@ -243,12 +275,12 @@ impl App {
             }
         }
 
-        let m1_pos = take_axes(rotate_inertial(
+        let m1_pos = project_viewport(rotate_inertial(
             -self.system.mass_ratio * Vec3::x(),
             self.t,
             inertial,
         ));
-        let m2_pos = take_axes(rotate_inertial(
+        let m2_pos = project_viewport(rotate_inertial(
             (1.0 - self.system.mass_ratio) * Vec3::x(),
             self.t,
             inertial,
