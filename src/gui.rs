@@ -1,4 +1,4 @@
-use eframe::egui::{self, Color32, ColorImage};
+use eframe::egui::{self, Color32, ColorImage, Context, DragValue, Key, Label, Slider};
 use nalgebra::Matrix2x3;
 use std::io::Write;
 
@@ -89,7 +89,7 @@ impl App {
         })
     }
 
-    fn event_loop(&mut self, ctx: &egui::Context, ui: Ui) {
+    fn event_loop(&mut self, ctx: &Context, ui: Ui) {
         ui.horizontal(|ui| self.draw_controls(ui));
 
         if !self.sim_needed {
@@ -108,7 +108,25 @@ impl App {
             self.sim_needed = false;
         }
 
+        self.handle_playback(ctx);
+    }
+
+    fn handle_playback(&mut self, ctx: &Context) {
+        self.paused ^= ctx.input(|i| i.key_pressed(Key::Space));
         self.paused |= self.sim_needed;
+
+        let playback_keys = |step: f64, left: Key, right: Key| {
+            step * self.playback_speed
+                * ctx.input(|i| {
+                    i.key_pressed(right) as i64 as f64 - i.key_pressed(left) as i64 as f64
+                })
+        };
+
+        self.t += playback_keys(0.1, Key::Comma, Key::Period);
+        self.t += playback_keys(1.0, Key::ArrowLeft, Key::ArrowRight);
+        self.t += playback_keys(5.0, Key::J, Key::L);
+        self.t = self.t.clamp(0.0, self.duration);
+
         if !self.paused {
             self.t += self.playback_speed * ctx.input(|i| i.stable_dt) as f64;
             self.t = self.t.rem_euclid(self.duration);
@@ -118,28 +136,24 @@ impl App {
 
     fn draw_controls(&mut self, ui: Ui) {
         let dt_before = self.dt;
-        ui.add(egui::Label::new("Δt"));
-        ui.add(
-            egui::DragValue::new(&mut self.dt)
-                .range(0.0..=0.05)
-                .speed(0.0001),
-        );
+        ui.add(Label::new("Δt"));
+        ui.add(DragValue::new(&mut self.dt).range(0.0..=0.05).speed(0.0001));
         if self.dt != dt_before {
             self.sim_needed = true;
             self.system.pos_log.truncate(1);
             self.system.vel_log.truncate(1);
         }
 
-        ui.add(egui::Label::new("Duration"));
-        ui.add(egui::DragValue::new(&mut self.duration).speed(0.1));
+        ui.add(Label::new("Duration"));
+        ui.add(DragValue::new(&mut self.duration).speed(0.1));
         self.duration = self.duration.max(0.0);
         self.sim_needed |= (self.duration / self.dt).ceil() as usize > self.system.pos_log.len();
 
-        ui.add(egui::Label::new("Trail"));
-        ui.add(egui::DragValue::new(&mut self.history).speed(0.1));
+        ui.add(Label::new("Trail"));
+        ui.add(DragValue::new(&mut self.history).speed(0.1));
 
-        ui.add(egui::Label::new("Playback Speed"));
-        ui.add(egui::DragValue::new(&mut self.playback_speed).speed(0.1));
+        ui.add(Label::new("Playback Speed"));
+        ui.add(DragValue::new(&mut self.playback_speed).speed(0.1));
 
         if ui.button(if self.paused { "⏵" } else { "⏸" }).clicked() {
             self.paused ^= true;
@@ -147,7 +161,7 @@ impl App {
 
         ui.style_mut().spacing.slider_width = ui.available_width() - 60.0;
         ui.add(
-            egui::Slider::new(&mut self.t, 0.0..=self.duration)
+            Slider::new(&mut self.t, 0.0..=self.duration)
                 .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.1 }),
         );
     }
@@ -191,9 +205,9 @@ impl App {
         let viewport_controls = |ui: Ui| {
             ui.label(label);
             for val in [&mut vc.cx, &mut vc.cy] {
-                ui.add(egui::DragValue::new(val).speed(vc.scale.exp() / 100.0));
+                ui.add(DragValue::new(val).speed(vc.scale.exp() / 100.0));
             }
-            ui.add(egui::DragValue::new(&mut vc.scale).speed(0.03));
+            ui.add(DragValue::new(&mut vc.scale).speed(0.03));
             let def_vcs = ViewConfigs::default();
             let def_vc = if inertial {
                 def_vcs.inertial_vcs
