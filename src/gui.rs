@@ -92,6 +92,8 @@ impl App {
     fn event_loop(&mut self, ctx: &Context, ui: Ui) {
         ui.horizontal(|ui| self.draw_controls(ui));
 
+        self.handle_playback(ctx);
+
         if !self.sim_needed {
             let size = ui.available_width() / 4.08;
 
@@ -103,17 +105,20 @@ impl App {
         } else if ui
             .button(egui::RichText::new("Simulate").size(30.0))
             .clicked()
+            || ctx.input(|i| i.key_pressed(Key::Space))
         {
             self.run_sim();
             self.sim_needed = false;
         }
-
-        self.handle_playback(ctx);
     }
 
     fn handle_playback(&mut self, ctx: &Context) {
         self.paused ^= ctx.input(|i| i.key_pressed(Key::Space));
         self.paused |= self.sim_needed;
+
+        if ctx.input(|i| i.key_pressed(Key::Num0)) {
+            self.t = 0.0;
+        }
 
         let playback_keys = |step: f64, left: Key, right: Key| {
             step * self.playback_speed
@@ -241,19 +246,22 @@ impl App {
         }[perspective];
 
         use std::f64::consts::FRAC_1_SQRT_2;
-        let frac_sqrt_3_2 = 3f64.sqrt() / 2.0;
-        let frac_sqrt_3_4 = frac_sqrt_3_2 / 2.0;
+        let frac_1_sqrt_6 = 6f64.sqrt().recip();
         let proj_mats = [
+            // xy
             Matrix2x3::identity(),
+            // yz
             Matrix2x3::new(0.0, 1.0, 0.0, 0.0, 0.0, 1.0),
+            // xz
             Matrix2x3::new(1.0, 0.0, 0.0, 0.0, 0.0, 1.0),
+            // isometric
             Matrix2x3::new(
                 FRAC_1_SQRT_2,
                 FRAC_1_SQRT_2,
                 0.0,
-                -frac_sqrt_3_4,
-                frac_sqrt_3_4,
-                frac_sqrt_3_2,
+                -frac_1_sqrt_6,
+                frac_1_sqrt_6,
+                2.0 * frac_1_sqrt_6,
             ),
         ];
         let project_viewport = |v: Vec3| {
