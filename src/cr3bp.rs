@@ -72,6 +72,7 @@ impl Cr3bs {
         )
     }
 
+    #[allow(dead_code)]
     pub fn euler(&mut self, dt: f64, steps: usize) {
         self.pos_log.reserve(steps);
         let init_len = self.pos_log.len();
@@ -83,6 +84,7 @@ impl Cr3bs {
         }
     }
 
+    #[allow(dead_code)]
     pub fn modified_euler(&mut self, dt: f64, steps: usize) {
         self.pos_log.reserve(steps);
         let init_len = self.pos_log.len();
