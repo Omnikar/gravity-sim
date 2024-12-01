@@ -1,5 +1,5 @@
 use eframe::egui::{self, Color32, ColorImage, Context, DragValue, Key, Label, Sense, Slider};
-use nalgebra::Matrix2x3;
+use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI, SQRT_2};
 use std::io::Write;
 
 use crate::cr3bp::{Cr3bs, Vec3};
@@ -34,17 +34,21 @@ impl Default for ViewConfigs {
     fn default() -> Self {
         Self {
             inertial_vcs: [
-                (0.0, 0.0, 1.0),
-                (0.0, 0.0, 1.0),
-                (0.0, 0.0, 1.0),
-                (0.0, 0.0, 1.0),
+                // xy
+                [0.0, 0.0, 1.0, 0.0, 0.0],
+                // yz
+                [0.0, 0.0, 1.0, FRAC_PI_2, FRAC_PI_2],
+                // xz
+                [0.0, 0.0, 1.0, 0.0, FRAC_PI_2],
+                // isometric
+                [0.0, 0.0, 1.0, FRAC_PI_4, SQRT_2.atan()],
             ]
             .map(Into::into),
             rotating_vcs: [
-                (1.0, 0.0, 0.0),
-                (0.0, 0.0, 0.0),
-                (1.0, 0.0, 0.0),
-                (0.7, -0.4, -0.25),
+                [1.0, 0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, FRAC_PI_2, FRAC_PI_2],
+                [1.0, 0.0, 0.0, 0.0, FRAC_PI_2],
+                [0.7, -0.4, -0.25, FRAC_PI_4, SQRT_2.atan()],
             ]
             .map(Into::into),
         }
@@ -56,10 +60,20 @@ pub struct ViewConfig {
     cx: f64,
     cy: f64,
     scale: f64,
+    theta: f64,
+    phi: f64,
+    show_controls: bool,
 }
-impl From<(f64, f64, f64)> for ViewConfig {
-    fn from((cx, cy, scale): (f64, f64, f64)) -> Self {
-        Self { cx, cy, scale }
+impl From<[f64; 5]> for ViewConfig {
+    fn from([cx, cy, scale, theta, phi]: [f64; 5]) -> Self {
+        Self {
+            cx,
+            cy,
+            scale,
+            theta,
+            phi,
+            show_controls: false,
+        }
     }
 }
 
@@ -190,17 +204,28 @@ impl App {
         let scale = vc.scale.exp();
 
         let viewport_control_bar = |vc: &mut ViewConfig, ui: Ui| {
-            ui.label(label);
-            for val in [&mut vc.cx, &mut vc.cy] {
-                ui.add(DragValue::new(val).speed(vc.scale.exp() / 100.0));
-            }
-            ui.add(DragValue::new(&mut vc.scale).speed(0.03));
+            let controls_button_label = if vc.show_controls {
+                for val in [&mut vc.cx, &mut vc.cy] {
+                    ui.add(DragValue::new(val).speed(vc.scale.exp() / 100.0));
+                }
+                for val in [&mut vc.theta, &mut vc.phi] {
+                    ui.add(DragValue::new(val).speed(0.02));
+                }
+                ui.add(DragValue::new(&mut vc.scale).speed(0.03));
+                "✔"
+            } else {
+                ui.label(label);
+                "#"
+            };
+            vc.show_controls ^= ui.button(controls_button_label).clicked();
+
             let def_vcs = ViewConfigs::default();
-            let def_vc = if inertial {
+            let mut def_vc = if inertial {
                 def_vcs.inertial_vcs
             } else {
                 def_vcs.rotating_vcs
             }[perspective];
+            def_vc.show_controls = vc.show_controls;
             if *vc != def_vc && ui.button("↺").clicked() {
                 *vc = def_vc;
             }
@@ -218,9 +243,30 @@ impl App {
                 Color32::WHITE,
             );
 
-            let delta = <[f32; 2]>::from(response.drag_delta() / size).map(|v| v as f64 * scale);
-            vc.cx -= delta[0];
-            vc.cy += delta[1];
+            let delta = response.drag_delta() / size;
+
+            // Default to rotation rather than panning for isometric perspective
+            if !ctx.input(|i| i.modifiers.shift) ^ (perspective == 3) {
+                let delta = <[f32; 2]>::from(delta).map(|v| v as f64 * scale);
+                vc.cx -= delta[0];
+                vc.cy += delta[1];
+            } else {
+                let old_proj = calc_proj_mat(vc.theta, vc.phi).transpose();
+                vc.theta -= delta[0] as f64 * PI;
+                vc.phi -= delta[1] as f64 * PI;
+                let new_proj = calc_proj_mat(vc.theta, vc.phi);
+                let mut up_projected = old_proj * nalgebra::Vector2::new(vc.cx, vc.cy);
+                let mut z_vector = old_proj.column(0).cross(&old_proj.column(1));
+                if (z_vector.z - 0.0).abs() > 1e-6 {
+                    z_vector /= z_vector.z;
+                    z_vector *= up_projected.z;
+                    up_projected -= z_vector;
+                }
+                let new_center = new_proj * up_projected;
+                vc.cx = new_center[0];
+                vc.cy = new_center[1];
+            }
+
             if let Some(mouse_pos) = response.hover_pos() {
                 let scroll = -ctx.input(|i| i.smooth_scroll_delta.y as f64) / 70.0;
                 vc.scale += scroll;
@@ -245,27 +291,9 @@ impl App {
             self.view_configs.rotating_vcs
         }[perspective];
 
-        use std::f64::consts::FRAC_1_SQRT_2;
-        let frac_1_sqrt_6 = 6f64.sqrt().recip();
-        let proj_mats = [
-            // xy
-            Matrix2x3::identity(),
-            // yz
-            Matrix2x3::new(0.0, 1.0, 0.0, 0.0, 0.0, 1.0),
-            // xz
-            Matrix2x3::new(1.0, 0.0, 0.0, 0.0, 0.0, 1.0),
-            // isometric
-            Matrix2x3::new(
-                FRAC_1_SQRT_2,
-                FRAC_1_SQRT_2,
-                0.0,
-                -frac_1_sqrt_6,
-                frac_1_sqrt_6,
-                2.0 * frac_1_sqrt_6,
-            ),
-        ];
+        let proj_mat = calc_proj_mat(config.theta, config.phi);
         let project_viewport = |v: Vec3| {
-            let v = proj_mats[perspective] * v;
+            let v = proj_mat * v;
             [v[0], v[1]]
         };
 
@@ -288,10 +316,11 @@ impl App {
             }
         };
 
+        let scale = config.scale.exp();
         let world2px = |p: [f64; 2]| {
             [
-                ((config.cy - p[1]) / config.scale.exp() + 0.5) * px_size as f64,
-                ((p[0] - config.cx) / config.scale.exp() + 0.5) * px_size as f64,
+                ((config.cy - p[1]) / scale + 0.5) * px_size as f64,
+                ((p[0] - config.cx) / scale + 0.5) * px_size as f64,
             ]
         };
 
@@ -398,4 +427,12 @@ fn rotate_inertial(v: Vec3, a: f64, inertial: bool) -> Vec3 {
     } else {
         v
     }
+}
+
+fn calc_proj_mat(theta: f64, phi: f64) -> nalgebra::Matrix2x3<f64> {
+    (nalgebra::Rotation3::from_axis_angle(&Vec3::z_axis(), theta)
+        * nalgebra::Rotation3::from_axis_angle(&Vec3::x_axis(), phi))
+    .matrix()
+    .transpose()
+    .remove_row(2)
 }

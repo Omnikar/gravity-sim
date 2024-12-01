@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Vec3::new(0.0, -2.0747636286776489E-1, 0.0),
     );
 
-    // Earth-Moon southern L2 halo orbit 560
+    // Earth-Moon southern L2 halo orbit 560 (NRHO)
     // let system = Cr3bs::new(
     //     EARTH_MOON_PI2,
     //     Vec3::new(1.0286910409504162, 0.0, -1.8633782121335304E-1),
