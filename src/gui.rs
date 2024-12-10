@@ -1,4 +1,5 @@
 use eframe::egui::{self, Color32, ColorImage, Context, DragValue, Key, Label, Sense, Slider};
+use nalgebra::RealField;
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI, SQRT_2};
 use std::io::Write;
 
@@ -23,6 +24,7 @@ pub struct App {
     pub view_configs: ViewConfigs,
     pub history: f64,
     sim_needed: bool,
+    // pub system_alt: Cr3bs,
 }
 
 #[derive(Clone, Copy)]
@@ -79,6 +81,7 @@ impl From<[f64; 5]> for ViewConfig {
 
 impl App {
     pub fn new(system: Cr3bs, dt: f64, duration: f64) -> Self {
+        // let system_alt = system.clone();
         Self {
             system,
             dt,
@@ -89,6 +92,7 @@ impl App {
             history: 10.0,
             view_configs: Default::default(),
             sim_needed: true,
+            // system_alt,
         }
     }
 
@@ -111,9 +115,20 @@ impl App {
         if !self.sim_needed {
             let size = ui.available_width() / 4.08;
 
+            // for inertial in [true, false] {
+            //     ui.horizontal(|ui| {
+            //         (0..4).for_each(|perspect| self.draw_view(ctx, ui, inertial, perspect, size));
+            //     });
+            // }
             for inertial in [true, false] {
                 ui.horizontal(|ui| {
-                    (0..4).for_each(|perspect| self.draw_view(ctx, ui, inertial, perspect, size));
+                    for perspective in 0..4 {
+                        if !inertial && perspective == 2 {
+                            self.draw_jacobi_plot(ui, size);
+                        } else {
+                            self.draw_view(ctx, ui, inertial, perspective, size);
+                        }
+                    }
                 });
             }
         } else if ui
@@ -161,6 +176,9 @@ impl App {
             self.sim_needed = true;
             self.system.pos_log.truncate(1);
             self.system.vel_log.truncate(1);
+
+            // self.system_alt.pos_log.truncate(1);
+            // self.system_alt.vel_log.truncate(1);
         }
 
         ui.add(Label::new("Duration"));
@@ -183,6 +201,27 @@ impl App {
             Slider::new(&mut self.t, 0.0..=self.duration)
                 .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.1 }),
         );
+    }
+
+    fn draw_jacobi_plot(&self, ui: Ui, size: f32) {
+        use egui_plot::{Line, Plot, PlotPoints};
+        let jacobi_points: PlotPoints = self
+            .system
+            .jacobi_log
+            .iter()
+            .take((self.t / self.dt) as usize)
+            .copied()
+            .enumerate()
+            .map(|(i, jac)| [i as f64 * self.dt, jac])
+            .collect();
+        let line = Line::new(jacobi_points);
+        ui.vertical(|ui| {
+            ui.label("jacobi constant");
+            Plot::new("Jacobi Plot")
+                .view_aspect(1.0)
+                .width(size)
+                .show(ui, |plot_ui| plot_ui.line(line));
+        });
     }
 
     fn draw_view(&mut self, ctx: &Context, ui: Ui, inertial: bool, perspective: usize, size: f32) {
@@ -307,6 +346,14 @@ impl App {
             .map(project_viewport)
             .collect::<Vec<_>>();
 
+        // let history_alt = self.system_alt.pos_log[start_i..end_i]
+        //     .iter()
+        //     .copied()
+        //     .enumerate()
+        //     .map(|(i, v)| rotate_inertial(v, (i + start_i) as f64 * self.dt, inertial))
+        //     .map(project_viewport)
+        //     .collect::<Vec<_>>();
+
         let px_size = VIEWPORT_SIZE;
         let mut image = ColorImage::new([px_size; 2], Color32::BLACK);
         let mut put_px = |row, col, color| {
@@ -324,8 +371,11 @@ impl App {
             ]
         };
 
-        let mut draw_trail = |history: &[[f64; 2]], color: Color32| {
-            for ends in history.windows(2) {
+        // FIXME: Trail fading doesn't work. Fix or remove it.
+        let mut draw_trail = |history: &[[f64; 2]], mut color: Color32, fade: bool| {
+            let iter = history.windows(2).enumerate();
+            let segs = iter.len() as f64;
+            for (seg_i, ends) in iter {
                 let [start, end] = [ends[0], ends[1]].map(world2px);
                 let size = px_size as f64;
                 if [start, end]
@@ -344,12 +394,17 @@ impl App {
                     let t = i as f64 / steps as f64;
                     let row = (1.0 - t) * start[0] + t * end[0];
                     let col = (1.0 - t) * start[1] + t * end[1];
+                    if fade {
+                        let fade_val = 1.0.min((seg_i as f64 + t) / segs + 1.0);
+                        color = color.gamma_multiply(fade_val as f32);
+                    }
                     put_px(row as isize, col as isize, color);
                 }
             }
         };
 
-        draw_trail(&history, TRAIL_COLOR);
+        draw_trail(&history, TRAIL_COLOR, false /*true*/);
+        // draw_trail(&history_alt, Color32::ORANGE, false /*true*/);
 
         if inertial {
             let circle_steps = 1024;
@@ -366,8 +421,8 @@ impl App {
                 .map(|v| v * (1.0 - self.system.mass_ratio))
                 .map(project_viewport)
                 .collect::<Vec<_>>();
-            draw_trail(&m1_history, M1_COLOR);
-            draw_trail(&m2_history, M2_COLOR);
+            draw_trail(&m1_history, M1_COLOR, false);
+            draw_trail(&m2_history, M2_COLOR, false);
         }
 
         let m1_pos = project_viewport(rotate_inertial(
@@ -380,11 +435,14 @@ impl App {
             self.t,
             inertial,
         ));
-        let m3_pos = history.last().copied().unwrap();
-        let circles = [m1_pos, m2_pos, m3_pos]
-            .into_iter()
-            .map(world2px)
-            .zip([M1_COLOR, M2_COLOR, M3_COLOR]);
+        // let m3_pos = history.last().copied().unwrap();
+        let m3_pos = *history.last().unwrap();
+        let circles = [
+            m1_pos, m2_pos, m3_pos, /* *history_alt.last().unwrap()*/
+        ]
+        .into_iter()
+        .map(world2px)
+        .zip([M1_COLOR, M2_COLOR, M3_COLOR, Color32::GREEN]);
         for ([row, col], color) in circles {
             let r = 5;
             (-r..=r)
@@ -401,7 +459,10 @@ impl App {
             ((self.duration / self.dt).ceil() as usize).saturating_sub(self.system.pos_log.len());
         self.system
             // TODO: Better integration method
-            .modified_euler(self.dt, remaining_steps);
+            // .modified_euler(self.dt, remaining_steps);
+            .verlet(self.dt, remaining_steps);
+
+        // self.system_alt.modified_euler(self.dt, remaining_steps);
 
         let pos_s = self.system.serialize_pos_log();
         let vel_s = self.system.serialize_vel_log();
@@ -414,6 +475,18 @@ impl App {
         for (pos, vel) in self.system.pos_log.iter().zip(self.system.vel_log.iter()) {
             writeln!(jacobi_f, "{}", self.system.jacobi(*pos, *vel)).unwrap();
         }
+
+        // let alt_pos_s = self.system.serialize_pos_log();
+        // let alt_vel_s = self.system.serialize_vel_log();
+
+        // let mut alt_pos_f = std::fs::File::create("pos_log1.csv").unwrap();
+        // write!(alt_pos_f, "{}", alt_pos_s).unwrap();
+        // let mut alt_vel_f = std::fs::File::create("vel_log1.csv").unwrap();
+        // write!(alt_vel_f, "{}", alt_vel_s).unwrap();
+        // let mut alt_jacobi_f = std::fs::File::create("jacobi_log1.csv").unwrap();
+        // for (pos, vel) in self.system.pos_log.iter().zip(self.system.vel_log.iter()) {
+        //     writeln!(alt_jacobi_f, "{}", self.system.jacobi(*pos, *vel)).unwrap();
+        // }
     }
 }
 

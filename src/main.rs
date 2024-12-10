@@ -24,11 +24,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // );
 
     // Earth-Moon southern L2 halo orbit 77
-    let system = Cr3bs::new(
-        EARTH_MOON_PI2,
-        Vec3::new(1.0895866679458164, 0.0, -2.016985733889109E-1),
-        Vec3::new(0.0, -2.0747636286776489E-1, 0.0),
-    );
+    // let system = Cr3bs::new(
+    //     EARTH_MOON_PI2,
+    //     Vec3::new(1.0895866679458164, 0.0, -2.016985733889109E-1),
+    //     Vec3::new(0.0, -2.0747636286776489E-1, 0.0),
+    // );
 
     // Earth-Moon southern L2 halo orbit 560 (NRHO)
     // let system = Cr3bs::new(
@@ -74,10 +74,63 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // );
 
     // Earth-Moon distant retrograde orbit 504
+    let system = Cr3bs::new(
+        EARTH_MOON_PI2,
+        Vec3::new(2.3311424621341986E-1, 0.0, 0.0),
+        Vec3::new(0.0, 2.418105116140247, 0.0),
+    );
+
+    // Earth-Moon eastern low prograde orbit 1088
     // let system = Cr3bs::new(
     //     EARTH_MOON_PI2,
-    //     Vec3::new(2.3311424621341986E-1, 0.0, 0.0),
-    //     Vec3::new(0.0, 2.418105116140247, 0.0),
+    //     Vec3::new(1.1037018564395995, 0.0, 0.0),
+    //     Vec3::new(0.0, 1.5466801744690156E-1, 0.0),
+    // );
+
+    // Earth-Moon southern L3 halo orbit 728
+    // let system = Cr3bs::new(
+    //     EARTH_MOON_PI2,
+    //     Vec3::new(-1.4910911328473246, 0.0, -9.190811179399557E-1),
+    //     Vec3::new(0.0, 1.1226361377641865, 0.0),
+    // );
+
+    // Earth-Moon L4 axial orbit 357
+    // let system = Cr3bs::new(
+    //     EARTH_MOON_PI2,
+    //     Vec3::new(4.8383615721820494E-1, 3.447318455507729E-1, 1E-1),
+    //     Vec3::new(
+    //         -5.08875059674026E-1,
+    //         2.5546757482145843E-1,
+    //         9.769305981522378E-1,
+    //     ),
+    // );
+
+    // Earth-Moon L4 long period orbit 118
+    // let system = Cr3bs::new(
+    //     EARTH_MOON_PI2,
+    //     Vec3::new(4.87849413449431E-1, 3.5688980531417824E-1, 0.0),
+    //     Vec3::new(-8.550199344420721E-1, 3.0569819108334334E-1, 0.0),
+    // );
+
+    // Earth-Moon L4 short period orbit 118
+    // let system = Cr3bs::new(
+    //     EARTH_MOON_PI2,
+    //     Vec3::new(4.87849413449431E-1, 1.4752174735141173, 0.0),
+    //     Vec3::new(1.0286389945059438, -7.830350597801781E-1, 0.0),
+    // );
+
+    // Earth-Moon 2:3 resonant orbit 636
+    // let system = Cr3bs::new(
+    //     EARTH_MOON_PI2,
+    //     Vec3::new(8.237755688613639E-1, 0.0, 0.0),
+    //     Vec3::new(0.0, 6.169210577539296E-1, 0.0),
+    // );
+
+    // Earth-Moon southern L2 halo orbit 1386
+    // let system = Cr3bs::new(
+    //     EARTH_MOON_PI2,
+    //     Vec3::new(1.1790623949937609, 0.0, -4.20474898439647E-2),
+    //     Vec3::new(0.0, -1.6531977431864223E-1, 0.0),
     // );
 
     gui::App::new(system, 0.001, 30.0).run()?;
