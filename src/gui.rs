@@ -1,7 +1,6 @@
 use eframe::egui::{self, Color32, ColorImage, Context, DragValue, Key, Label, Sense, Slider};
-use nalgebra::RealField;
+use itertools::Itertools;
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI, SQRT_2};
-use std::io::Write;
 
 use crate::cr3bp::{Cr3bs, Vec3};
 
@@ -16,7 +15,7 @@ type Ui<'a> = &'a mut egui::Ui;
 
 pub struct App {
     pub system: Cr3bs,
-    pub dt: f64,
+    pub dt0: f64,
     pub duration: f64,
     pub playback_speed: f64,
     pub paused: bool,
@@ -80,11 +79,11 @@ impl From<[f64; 5]> for ViewConfig {
 }
 
 impl App {
-    pub fn new(system: Cr3bs, dt: f64, duration: f64) -> Self {
+    pub fn new(system: Cr3bs, dt0: f64, duration: f64) -> Self {
         // let system_alt = system.clone();
         Self {
             system,
-            dt,
+            dt0,
             duration,
             playback_speed: 1.0,
             paused: true,
@@ -115,11 +114,6 @@ impl App {
         if !self.sim_needed {
             let size = ui.available_width() / 4.08;
 
-            // for inertial in [true, false] {
-            //     ui.horizontal(|ui| {
-            //         (0..4).for_each(|perspect| self.draw_view(ctx, ui, inertial, perspect, size));
-            //     });
-            // }
             for inertial in [true, false] {
                 ui.horizontal(|ui| {
                     for perspective in 0..4 {
@@ -169,25 +163,34 @@ impl App {
     }
 
     fn draw_controls(&mut self, ui: Ui) {
-        let dt_before = self.dt;
-        ui.add(Label::new("Δt"));
-        ui.add(DragValue::new(&mut self.dt).range(0.0..=0.05).speed(0.0001));
-        if self.dt != dt_before {
+        let dt_before = self.dt0;
+        ui.add(Label::new("Δt₀"));
+        ui.add(
+            DragValue::new(&mut self.dt0)
+                .range(0.0..=0.05)
+                .speed(0.0001),
+        );
+        if self.dt0 != dt_before {
             self.sim_needed = true;
+            self.system.time_log.truncate(1);
             self.system.pos_log.truncate(1);
             self.system.vel_log.truncate(1);
+            self.system.jacobi_log.truncate(1);
 
+            // self.system_alt.time_log.truncate(1);
             // self.system_alt.pos_log.truncate(1);
             // self.system_alt.vel_log.truncate(1);
+            // self.system_alt.jacobi_log.truncate(1);
         }
 
         ui.add(Label::new("Duration"));
         ui.add(DragValue::new(&mut self.duration).speed(0.1));
         self.duration = self.duration.max(0.0);
-        self.sim_needed |= (self.duration / self.dt).ceil() as usize > self.system.pos_log.len();
+        self.sim_needed |= *self.system.time_log.last().unwrap() < self.duration;
 
         ui.add(Label::new("Trail"));
         ui.add(DragValue::new(&mut self.history).speed(0.1));
+        self.history = self.history.max(0.0);
 
         ui.add(Label::new("Playback Speed"));
         ui.add(DragValue::new(&mut self.playback_speed).speed(0.1));
@@ -207,20 +210,27 @@ impl App {
         use egui_plot::{Line, Plot, PlotPoints};
         let jacobi_points: PlotPoints = self
             .system
-            .jacobi_log
-            .iter()
-            .take((self.t / self.dt) as usize)
-            .copied()
-            .enumerate()
-            .map(|(i, jac)| [i as f64 * self.dt, jac])
+            .timed_jacobi()
+            .map_while(|(t, j)| (t < self.t).then_some([t, j]))
             .collect();
         let line = Line::new(jacobi_points);
+
+        // let jacobi_points_alt: PlotPoints = self
+        //     .system_alt
+        //     .timed_jacobi()
+        //     .map_while(|(t, j)| (t < self.t).then_some([t, j]))
+        //     .collect();
+        // let line_alt = Line::new(jacobi_points_alt);
+
         ui.vertical(|ui| {
             ui.label("jacobi constant");
             Plot::new("Jacobi Plot")
                 .view_aspect(1.0)
                 .width(size)
-                .show(ui, |plot_ui| plot_ui.line(line));
+                .show(ui, |plot_ui| {
+                    plot_ui.line(line);
+                    // plot_ui.line(line_alt);
+                });
         });
     }
 
@@ -230,8 +240,7 @@ impl App {
             ["xy", "yz", "xz", "isometric"][perspective],
             ["rotating", "inertial"][inertial as usize]
         );
-        let history_len = (self.history / self.dt).floor() as usize + 1;
-        let image = self.render_view(history_len, inertial, perspective);
+        let image = self.render_view(self.history, inertial, perspective);
         let texture = ui.ctx().load_texture(&label, image, Default::default());
         let vcs = if inertial {
             &mut self.view_configs.inertial_vcs
@@ -323,7 +332,12 @@ impl App {
         });
     }
 
-    fn render_view(&self, history_len: usize, inertial: bool, perspective: usize) -> ColorImage {
+    fn render_view(
+        &self,
+        history_duration: f64, /*history_len: usize*/
+        inertial: bool,
+        perspective: usize,
+    ) -> ColorImage {
         let config = if inertial {
             self.view_configs.inertial_vcs
         } else {
@@ -336,23 +350,23 @@ impl App {
             [v[0], v[1]]
         };
 
-        let end_i = ((self.t / self.dt) as usize + 1).clamp(0, self.system.pos_log.len() - 1);
-        let start_i = end_i.saturating_sub(history_len);
-        let history = self.system.pos_log[start_i..end_i]
-            .iter()
-            .copied()
-            .enumerate()
-            .map(|(i, v)| rotate_inertial(v, (i + start_i) as f64 * self.dt, inertial))
+        let history: Vec<_> = self
+            .system
+            .timed_pos()
+            .skip_while(|&(t, _)| t < self.t - history_duration)
+            .take_while_inclusive(|&(t, _)| t <= self.t)
+            .map(|(t, p)| rotate_inertial(p, t, inertial))
             .map(project_viewport)
-            .collect::<Vec<_>>();
+            .collect();
 
-        // let history_alt = self.system_alt.pos_log[start_i..end_i]
-        //     .iter()
-        //     .copied()
-        //     .enumerate()
-        //     .map(|(i, v)| rotate_inertial(v, (i + start_i) as f64 * self.dt, inertial))
+        // let history_alt: Vec<_> = self
+        //     .system_alt
+        //     .timed_pos()
+        //     .skip_while(|&(t, _)| t < self.t - history_duration)
+        //     .take_while_inclusive(|&(t, _)| t <= self.t)
+        //     .map(|(t, p)| rotate_inertial(p, t, inertial))
         //     .map(project_viewport)
-        //     .collect::<Vec<_>>();
+        //     .collect();
 
         let px_size = VIEWPORT_SIZE;
         let mut image = ColorImage::new([px_size; 2], Color32::BLACK);
@@ -395,7 +409,7 @@ impl App {
                     let row = (1.0 - t) * start[0] + t * end[0];
                     let col = (1.0 - t) * start[1] + t * end[1];
                     if fade {
-                        let fade_val = 1.0.min((seg_i as f64 + t) / segs + 1.0);
+                        let fade_val = 1f64.min((seg_i as f64 + t) / segs + 1.0);
                         color = color.gamma_multiply(fade_val as f32);
                     }
                     put_px(row as isize, col as isize, color);
@@ -435,7 +449,6 @@ impl App {
             self.t,
             inertial,
         ));
-        // let m3_pos = history.last().copied().unwrap();
         let m3_pos = *history.last().unwrap();
         let circles = [
             m1_pos, m2_pos, m3_pos, /* *history_alt.last().unwrap()*/
@@ -455,38 +468,28 @@ impl App {
     }
 
     fn run_sim(&mut self) {
-        let remaining_steps =
-            ((self.duration / self.dt).ceil() as usize).saturating_sub(self.system.pos_log.len());
-        self.system
-            // TODO: Better integration method
-            // .modified_euler(self.dt, remaining_steps);
-            .verlet(self.dt, remaining_steps);
+        let remaining_t = self.duration - self.system.time_log.last().unwrap();
+        self.system.rkf45(self.dt0, 1e-10, remaining_t);
 
-        // self.system_alt.modified_euler(self.dt, remaining_steps);
-
-        let pos_s = self.system.serialize_pos_log();
-        let vel_s = self.system.serialize_vel_log();
+        // self.system_alt.verlet(self.dt0, remaining_t);
 
         let mut pos_f = std::fs::File::create("pos_log.csv").unwrap();
-        write!(pos_f, "{}", pos_s).unwrap();
+        self.system.write_pos_log(&mut pos_f);
         let mut vel_f = std::fs::File::create("vel_log.csv").unwrap();
-        write!(vel_f, "{}", vel_s).unwrap();
+        self.system.write_vel_log(&mut vel_f);
+        let mut time_f = std::fs::File::create("time_log.csv").unwrap();
+        self.system.write_time_log(&mut time_f);
         let mut jacobi_f = std::fs::File::create("jacobi_log.csv").unwrap();
-        for (pos, vel) in self.system.pos_log.iter().zip(self.system.vel_log.iter()) {
-            writeln!(jacobi_f, "{}", self.system.jacobi(*pos, *vel)).unwrap();
-        }
+        self.system.write_jacobi_log(&mut jacobi_f);
 
-        // let alt_pos_s = self.system.serialize_pos_log();
-        // let alt_vel_s = self.system.serialize_vel_log();
-
-        // let mut alt_pos_f = std::fs::File::create("pos_log1.csv").unwrap();
-        // write!(alt_pos_f, "{}", alt_pos_s).unwrap();
-        // let mut alt_vel_f = std::fs::File::create("vel_log1.csv").unwrap();
-        // write!(alt_vel_f, "{}", alt_vel_s).unwrap();
-        // let mut alt_jacobi_f = std::fs::File::create("jacobi_log1.csv").unwrap();
-        // for (pos, vel) in self.system.pos_log.iter().zip(self.system.vel_log.iter()) {
-        //     writeln!(alt_jacobi_f, "{}", self.system.jacobi(*pos, *vel)).unwrap();
-        // }
+        // let mut pos_f_alt = std::fs::File::create("pos_log_alt.csv").unwrap();
+        // self.system.write_pos_log(&mut pos_f_alt);
+        // let mut vel_f_alt = std::fs::File::create("vel_log_alt.csv").unwrap();
+        // self.system.write_vel_log(&mut vel_f_alt);
+        // let mut time_f_alt = std::fs::File::create("time_log_alt.csv").unwrap();
+        // self.system.write_time_log(&mut time_f_alt);
+        // let mut jacobi_f_alt = std::fs::File::create("jacobi_log_alt.csv").unwrap();
+        // self.system.write_jacobi_log(&mut jacobi_f_alt);
     }
 }
 

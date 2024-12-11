@@ -31,11 +31,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // );
 
     // Earth-Moon southern L2 halo orbit 560 (NRHO)
-    // let system = Cr3bs::new(
-    //     EARTH_MOON_PI2,
-    //     Vec3::new(1.0286910409504162, 0.0, -1.8633782121335304E-1),
-    //     Vec3::new(0.0, -1.1733440134433075E-1, 0.0),
-    // );
+    let system = Cr3bs::new(
+        EARTH_MOON_PI2,
+        Vec3::new(1.0286910409504162, 0.0, -1.8633782121335304E-1),
+        Vec3::new(0.0, -1.1733440134433075E-1, 0.0),
+    );
 
     // Earth-Moon northern butterfly orbit 54
     // let system = Cr3bs::new(
@@ -74,11 +74,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // );
 
     // Earth-Moon distant retrograde orbit 504
-    let system = Cr3bs::new(
-        EARTH_MOON_PI2,
-        Vec3::new(2.3311424621341986E-1, 0.0, 0.0),
-        Vec3::new(0.0, 2.418105116140247, 0.0),
-    );
+    // let system = Cr3bs::new(
+    //     EARTH_MOON_PI2,
+    //     Vec3::new(2.3311424621341986E-1, 0.0, 0.0),
+    //     Vec3::new(0.0, 2.418105116140247, 0.0),
+    // );
 
     // Earth-Moon eastern low prograde orbit 1088
     // let system = Cr3bs::new(
