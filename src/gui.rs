@@ -1,6 +1,9 @@
-use eframe::egui::{self, Color32, ColorImage, Context, DragValue, Key, Label, Sense, Slider};
+use eframe::egui::{
+    self, Color32, ColorImage, Context, DragValue, Key, Label, Sense, Slider, Spinner,
+};
 use itertools::Itertools;
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI, SQRT_2};
+use std::thread;
 
 use crate::cr3bp::{Cr3bs, Vec3};
 
@@ -23,6 +26,7 @@ pub struct App {
     pub view_configs: ViewConfigs,
     pub history: f64,
     sim_needed: bool,
+    save_handle: Option<thread::JoinHandle<()>>,
     // pub system_alt: Cr3bs,
 }
 
@@ -91,6 +95,7 @@ impl App {
             history: 10.0,
             view_configs: Default::default(),
             sim_needed: true,
+            save_handle: None,
             // system_alt,
         }
     }
@@ -107,7 +112,7 @@ impl App {
     }
 
     fn event_loop(&mut self, ctx: &Context, ui: Ui) {
-        ui.horizontal(|ui| self.draw_controls(ui));
+        ui.horizontal(|ui| self.draw_controls(ui, ctx));
 
         self.handle_playback(ctx);
 
@@ -131,6 +136,7 @@ impl App {
             || ctx.input(|i| i.key_pressed(Key::Space))
         {
             self.run_sim();
+            self.save();
             self.sim_needed = false;
         }
     }
@@ -162,7 +168,20 @@ impl App {
         }
     }
 
-    fn draw_controls(&mut self, ui: Ui) {
+    fn draw_controls(&mut self, ui: Ui, ctx: &Context) {
+        if let Some(handle) = self.save_handle.take() {
+            if handle.is_finished() {
+                handle.join().unwrap();
+                self.save_handle = None;
+            } else {
+                self.save_handle = Some(handle);
+                ui.label("Saving");
+                ui.add(Spinner::new());
+            }
+        } else if ctx.input(|i| i.key_pressed(Key::S)) {
+            self.save();
+        }
+
         let dt_before = self.dt0;
         ui.add(Label::new("Δt₀"));
         ui.add(
@@ -195,9 +214,7 @@ impl App {
         ui.add(Label::new("Playback Speed"));
         ui.add(DragValue::new(&mut self.playback_speed).speed(0.1));
 
-        if ui.button(if self.paused { "⏵" } else { "⏸" }).clicked() {
-            self.paused ^= true;
-        }
+        self.paused ^= ui.button(if self.paused { "⏵" } else { "⏸" }).clicked();
 
         ui.style_mut().spacing.slider_width = ui.available_width() - 60.0;
         ui.add(
@@ -472,15 +489,21 @@ impl App {
         self.system.rkf45(self.dt0, 1e-10, remaining_t);
 
         // self.system_alt.verlet(self.dt0, remaining_t);
+    }
 
-        let mut pos_f = std::fs::File::create("pos_log.csv").unwrap();
-        self.system.write_pos_log(&mut pos_f);
-        let mut vel_f = std::fs::File::create("vel_log.csv").unwrap();
-        self.system.write_vel_log(&mut vel_f);
-        let mut time_f = std::fs::File::create("time_log.csv").unwrap();
-        self.system.write_time_log(&mut time_f);
-        let mut jacobi_f = std::fs::File::create("jacobi_log.csv").unwrap();
-        self.system.write_jacobi_log(&mut jacobi_f);
+    fn save(&mut self) {
+        let system = self.system.clone();
+
+        self.save_handle = Some(thread::spawn(move || {
+            let mut pos_f = std::fs::File::create("pos_log.csv").unwrap();
+            system.write_pos_log(&mut pos_f);
+            let mut vel_f = std::fs::File::create("vel_log.csv").unwrap();
+            system.write_vel_log(&mut vel_f);
+            let mut time_f = std::fs::File::create("time_log.csv").unwrap();
+            system.write_time_log(&mut time_f);
+            let mut jacobi_f = std::fs::File::create("jacobi_log.csv").unwrap();
+            system.write_jacobi_log(&mut jacobi_f);
+        }));
 
         // let mut pos_f_alt = std::fs::File::create("pos_log_alt.csv").unwrap();
         // self.system.write_pos_log(&mut pos_f_alt);
