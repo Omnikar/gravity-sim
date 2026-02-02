@@ -4,6 +4,8 @@ This program simulates a satellite orbiting under the influence of gravity from 
 
 The simulation uses variable-step-size Runge–Kutta–Fehlberg numerical integration to maximize simulation precision.
 
+For more information, see the [paper](<Analyzing Methods for Unstable Halo Orbit Maintenance.pdf>).
+
 ```
 cargo run --release
 ```
